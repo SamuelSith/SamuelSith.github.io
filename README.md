@@ -1,2 +1,2 @@
 # SamuelSith.github.io
-Generate Insults
+Generate schematics
