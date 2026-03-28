@@ -1,542 +1,258 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Modern Insult Generator</title>
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { motion } from 'framer-motion';
+import { Box, FileText } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import ImageUploader from '../components/converter/ImageUploader';
+import SizeSlider from '../components/converter/SizeSlider.jsx';
+import BlockPreview from '../components/converter/BlockPreview';
+import ConvertButton from '../components/converter/ConvertButton';
+import OrientationToggle from '../components/converter/OrientationToggle';
+import FormatToggle from '../components/converter/FormatToggle';
+import BlockSelector from '../components/converter/BlockSelector';
+import PalettePresets from '../components/converter/PalettePresets';
+import ImageAdjustments from '../components/converter/ImageAdjustments';
+import ThreeDPreview from '../components/converter/ThreeDPreview';
+import { BLOCK_PALETTE } from '../lib/minecraft/blockColors';
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;500;700&family=Cinzel:wght@400;700&display=swap" rel="stylesheet">
+export default function Converter() {
+  const [imageInfo, setImageInfo] = useState(null);
+  const [targetWidth, setTargetWidth] = useState(128);
+  const [targetHeight, setTargetHeight] = useState(128);
+  const [thickness, setThickness] = useState(1);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [isConverting, setIsConverting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [orientation, setOrientation] = useState('vertical');
+  const [format, setFormat] = useState('litematic');
+  const [fileName, setFileName] = useState('');
+  const [allowedBlocks, setAllowedBlocks] = useState(() => new Set(BLOCK_PALETTE.map(b => b.name)));
+  const [adjustments, setAdjustments] = useState({ brightness: 0, contrast: 0, grayscale: false });
+  const [previewBlocks, setPreviewBlocks] = useState(null);
+  const previewTimeout = useRef(null);
 
-    <style>
-        /* ===========================
-             Basic Reset & Variables
-             =========================== */
-        :root{
-            --bg:#0f1724;
-            --card:#0b1220;
-            --muted:#9aa4b2;
-            --accent:#7ee3b3;
-            --accent-2:#8ad4ff;
-            --text:#e6eef6;
-            --glass: rgba(255,255,255,0.03);
-            --glass-2: rgba(255,255,255,0.02);
-            --shadow: 0 8px 30px rgba(2,6,23,0.6);
-            --radius:14px;
-            --glass-border: rgba(255,255,255,0.04);
-            --transition: 250ms cubic-bezier(.2,.9,.25,1);
-        }
+  // Precompute palette for fast lookup
+  const palette = useRef(BLOCK_PALETTE.map(b => [b.r, b.g, b.b]));
+  const paletteNames = useRef(BLOCK_PALETTE.map(b => b.name));
 
-        /* Light theme overrides */
-        :root[data-theme="light"]{
-            --bg: #f4f7fb;
-            --card:#ffffff;
-            --muted:#556574;
-            --accent:#0f9d58;
-            --accent-2:#1e90ff;
-            --text:#0a1230;
-            --glass: rgba(10,18,48,0.03);
-            --glass-2: rgba(10,18,48,0.02);
-            --shadow: 0 10px 30px rgba(12,20,40,0.08);
-            --glass-border: rgba(2,6,23,0.04);
-        }
+  const handleImageLoad = useCallback((info) => {
+    setImageInfo(info);
+    const aspectRatio = info.height / info.width;
+    setTargetWidth(128);
+    setTargetHeight(Math.round(128 * aspectRatio));
+    const baseName = info.name?.replace(/\.[^.]+$/, '') || 'image';
+    setFileName(baseName);
+  }, []);
 
-        *{box-sizing:border-box}
-        html,body{height:100%}
-        body{
-            margin:0;
-            font-family: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-            background: radial-gradient(1200px 600px at 10% 20%, rgba(138,212,255,0.06), transparent 10%),
-                                    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 40%),
-                                    var(--bg);
-            color:var(--text);
-            -webkit-font-smoothing:antialiased;
-            -moz-osx-font-smoothing:grayscale;
-            padding:48px 20px;
-            transition: background var(--transition), color var(--transition);
-            display:flex;
-            align-items:center;
-            justify-content:center;
-        }
+  const handleClear = useCallback(() => {
+    setImageInfo(null);
+    setPreviewUrl(null);
+    setPreviewBlocks(null);
+    setTargetWidth(128);
+    setTargetHeight(128);
+    setThickness(1);
+    setFileName('');
+    setAdjustments({ brightness: 0, contrast: 0, grayscale: false });
+  }, []);
 
-        /* ===========================
-             Container & Card
-             =========================== */
-        .container{
-            width:min(980px, 96%);
-            display:flex;
-            gap:28px;
-            align-items:flex-start;
-            justify-content:space-between;
-            flex-wrap:wrap;
-        }
+  // Debounced preview
+  useEffect(() => {
+    if (!imageInfo) { setPreviewUrl(null); setPreviewBlocks(null); return; }
+    if (previewTimeout.current) clearTimeout(previewTimeout.current);
+    previewTimeout.current = setTimeout(() => {
+      const url = generatePreview(imageInfo.data, imageInfo.width, imageInfo.height, targetWidth, targetHeight, allowedBlocks, adjustments);
+      setPreviewUrl(url);
+      const pbData = generatePreviewBlocks(imageInfo.data, imageInfo.width, imageInfo.height, targetWidth, targetHeight, allowedBlocks, adjustments);
+      setPreviewBlocks(pbData);
+    }, 250);
+    return () => { if (previewTimeout.current) clearTimeout(previewTimeout.current); };
+  }, [imageInfo, targetWidth, targetHeight, allowedBlocks, adjustments]);
 
-        .card{
-            flex:1 1 440px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent),
-                                    var(--card);
-            border-radius:var(--radius);
-            padding:22px;
-            box-shadow:var(--shadow);
-            border:1px solid var(--glass-border);
-            transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
-            min-width:280px;
-        }
+  // Fast nearest block function
+  const nearestBlock = (r, g, b) => {
+    let bestIndex = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < palette.current.length; i++) {
+      const [pr, pg, pb] = palette.current[i];
+      const dr = r - pr;
+      const dg = g - pg;
+      const db = b - pb;
+      const dist = dr*dr + dg*dg + db*db;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  };
 
-        header.app-top{
-            display:flex;
-            gap:12px;
-            align-items:center;
-            justify-content:space-between;
-            margin-bottom:12px;
-        }
+  // Convert image to schematic
+  const handleConvert = useCallback(async () => {
+    if (!imageInfo) return;
 
-        .brand{
-            display:flex;
-            gap:12px;
-            align-items:center;
-        }
+    // Limit total blocks
+    const totalBlocks = targetWidth * targetHeight * thickness;
+    if (totalBlocks > 1000000) {
+      alert("Too many blocks! Reduce size or thickness.");
+      return;
+    }
 
-        .logo{
-            width:48px;height:48px;border-radius:10px;
-            display:grid;place-items:center;
-            background:linear-gradient(135deg,var(--accent),var(--accent-2));
-            color:white;font-weight:700;font-family:"Cinzel",serif;
-            box-shadow: 0 6px 18px rgba(10,10,20,0.2);
-        }
+    setIsConverting(true);
+    setProgress(0);
+    await new Promise(r => setTimeout(r, 50));
 
-        h1{
-            font-size:18px;margin:0;
-            letter-spacing:-0.2px;
-        }
-        p.lead{margin:0;font-size:13px;color:var(--muted)}
+    // Resize & prepare typed arrays
+    const resized = resizeImageData(imageInfo.data, imageInfo.width, imageInfo.height, targetWidth, targetHeight, adjustments);
+    const pixels = new Float32Array(targetWidth * targetHeight * 3);
+    for (let i = 0; i < targetWidth*targetHeight; i++) {
+      const p = resized[i];
+      pixels[i*3] = p.r;
+      pixels[i*3+1] = p.g;
+      pixels[i*3+2] = p.b;
+    }
 
-        /* ===========================
-             Controls
-             =========================== */
-        .controls{
-            display:flex;
-            gap:10px;
-            align-items:center;
-            flex-wrap:wrap;
-            margin:16px 0;
-        }
+    // Apply fast Floyd–Steinberg dithering
+    for (let y = 0; y < targetHeight; y++) {
+      for (let x = 0; x < targetWidth; x++) {
+        const idx = (y*targetWidth + x)*3;
+        const r = pixels[idx];
+        const g = pixels[idx+1];
+        const b = pixels[idx+2];
 
-        select, button{
-            font-size:14px;
-            border-radius:10px;
-            padding:10px 14px;
-            border:1px solid var(--glass-border);
-            background:linear-gradient(180deg,var(--glass),var(--glass-2));
-            color:var(--text);
-            transition: background var(--transition), transform var(--transition);
-            outline:none;
-        }
+        const blockIndex = nearestBlock(r,g,b);
+        const [pr, pg, pb] = palette.current[blockIndex];
 
-        select:focus, button:focus{box-shadow:0 6px 20px rgba(2,6,23,0.08)}
-        button.primary{
-            background:linear-gradient(90deg,var(--accent),var(--accent-2));
-            color:white;border:none;
-            font-weight:600;
-            cursor:pointer;
-            box-shadow: 0 6px 20px rgba(11,13,25,0.2);
-        }
-        button.ghost{
-            background:transparent;
-            border:1px dashed var(--glass-border);
-            cursor:pointer;
-        }
+        const er = r - pr;
+        const eg = g - pg;
+        const eb = b - pb;
 
-        .btn-row{display:flex;gap:8px;align-items:center}
-
-        /* ===========================
-             Insult Card / Typography
-             =========================== */
-        .insult-wrap{
-            min-height:120px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            text-align:center;
-            padding:18px;
-            border-radius:12px;
-            margin-top:6px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.01), transparent);
-            border:1px solid transparent;
-            transition: transform .35s cubic-bezier(.2,.9,.25,1), opacity .35s;
-        }
-
-        .insult {
-            font-family:"Cinzel", serif;
-            font-weight:700;
-            font-size:20px;
-            line-height:1.25;
-            color:var(--text);
-            overflow:hidden;
-            display:inline-block;
-            white-space:pre-wrap;
-        }
-
-        .insult span.letter{
-            display:inline-block;
-            opacity:0;
-            transform: translateY(8px) rotateX(12deg);
-            animation: letter-in .45s forwards;
-            animation-timing-function: cubic-bezier(.2,.9,.25,1);
-        }
-
-        /* letter stagger animation uses CSS variable --i set inline */
-        .insult span.letter{
-            animation-delay: calc(var(--i) * 0.02s);
-        }
-
-        @keyframes letter-in{
-            to{opacity:1; transform:none}
-        }
-
-        /* small meta */
-        .meta{
-            margin-top:12px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;
-        }
-
-        /* copy toast */
-        .toast{
-            position:fixed;
-            right:18px;
-            bottom:18px;
-            background:var(--card);
-            color:var(--text);
-            padding:10px 14px;
-            border-radius:10px;
-            box-shadow:var(--shadow);
-            border:1px solid var(--glass-border);
-            transform:translateY(12px);
-            opacity:0;
-            pointer-events:none;
-            transition:opacity .25s,var(--transition);
-        }
-        .toast.show{opacity:1;transform:none;pointer-events:auto}
-
-        /* theme toggle */
-        .toggle{
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-            padding:6px;
-            border-radius:999px;
-            background:transparent;
-            border:1px solid var(--glass-border);
-            cursor:pointer;
-        }
-
-        /* Responsive */
-        @media (max-width:720px){
-            .container{padding-bottom:18px}
-            .brand{gap:10px}
-        }
-
-        /* subtle hover effects */
-        .card:hover{transform:translateY(-6px)}
-        button.primary:hover{transform:translateY(-3px)}
-    </style>
-</head>
-<body>
-    <main class="container" aria-live="polite">
-        <!-- Left: Controls & Options -->
-        <section class="card" aria-labelledby="appTitle">
-            <header class="app-top">
-                <div class="brand">
-                    <div class="logo">IG</div>
-                    <div>
-                        <h1 id="appTitle">Insult Generator</h1>
-                        <p class="lead">Playful, themed insults — harmlessly dramatic.</p>
-                    </div>
-                </div>
-
-                <!-- Theme toggle -->
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <div style="font-size:13px;color:var(--muted)">Theme</div>
-                    <button id="themeToggle" class="toggle" title="Toggle dark / light">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="display:block">
-                            <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                            <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4" />
-                        </svg>
-                    </button>
-                </div>
-            </header>
-
-            <!-- Controls -->
-            <div class="controls" aria-hidden="false">
-                <label for="category" style="display:none">Category</label>
-                <select id="category" aria-label="Select insults category">
-                    <option value="pirate">Pirate</option>
-                    <option value="shakespeare">Shakespeare</option>
-                    <option value="nerd">Nerd</option>
-                    <option value="office">Office</option>
-                    <option value="medieval">Medieval</option>
-                </select>
-
-                <div class="btn-row" style="margin-left:auto">
-                    <button id="generateBtn" class="primary">Generate Insult</button>
-                    <button id="copyBtn" class="ghost" title="Copy insult to clipboard">Copy</button>
-                </div>
-            </div>
-
-            <!-- Insult display -->
-            <div class="insult-wrap" aria-live="polite" id="insultWrap">
-                <div class="insult" id="insult">Click Generate to unleash a witty barb.</div>
-            </div>
-
-            <!-- Meta & saved info -->
-            <div class="meta">
-                <div id="categoryLabel" style="text-transform:capitalize">Category: Pirate</div>
-                <div id="savedInfo" title="Last saved insult">Last: —</div>
-            </div>
-        </section>
-
-        <!-- Right: Info / Card -->
-        <aside class="card" aria-label="About">
-            <h2 style="margin:0 0 8px 0;font-size:16px">About this app</h2>
-            <p style="margin:0 0 12px;color:var(--muted);line-height:1.5">
-                A small, modern insult generator demonstrating JavaScript, CSS animations, theme support, responsive layout, and localStorage persistence.
-            </p>
-
-            <h3 style="font-size:13px;margin:12px 0 8px 0;color:var(--muted)">Tips</h3>
-            <ul style="padding-left:18px;margin:0;color:var(--muted);line-height:1.6">
-                <li>Choose a category and press Generate.</li>
-                <li>Copy the insult and paste where appropriate.</li>
-                <li>Theme toggles persist across visits.</li>
-            </ul>
-            <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
-                <button id="randomizeCat" class="ghost">Random Category</button>
-                <button id="clearSaved" class="ghost">Clear Saved</button>
-            </div>
-        </aside>
-    </main>
-
-    <!-- Toast -->
-    <div id="toast" class="toast" role="status" aria-live="polite">Copied to clipboard</div>
-
-    <script>
-        /* ===========================
-             Data: Clean, playful insults per category
-             (Avoid targeting protected classes / slurs)
-             =========================== */
-        const INSULTS = {
-            pirate: [
-                "Ye bilge-suckin' scallywag with a compass for a brain.",
-                "Aye, ye be the kind o' seaweed that gets stuck on a boot.",
-                "Ye look like a map with all the good parts torn out.",
-                "Landlubber! The gulls pity your navigation skills.",
-                "Ye have the charm of a barnacle on a hull."
-            ],
-            shakespeare: [
-                "Thou pribbling, ill-nurtured hedge-born scoundrel!",
-                "Thou art as crooked as a curled codpiece, and twice as empty.",
-                "Fie on thee, thou hast a tongue more nimble than thy wit.",
-                "Thou sodden-dewied, milk-livered knave.",
-                "Thou art a tedious clown, fit for no company."
-            ],
-            nerd: [
-                "You debug like a magician—lots of smoke, no answers.",
-                "Your code's complexity is a feature, not a bug. Sad feature.",
-                "You're the reason comments need to exist.",
-                "You'd lose a byte in a bit contest.",
-                "Your logic has more loops than a retro platformer."
-            ],
-            office: [
-                "You schedule meetings where clarity goes to die.",
-                "You have the charisma of a missed deadline.",
-                "Your inbox is a modern art installation of procrastination.",
-                "You bring meetings to life—then promptly kill productivity.",
-                "You're the human version of a passive-aggressive calendar invite."
-            ],
-            medieval: [
-                "You reek of stale mead and someone else's bad decisions.",
-                "Your conquest ambitions are matched only by your nap times.",
-                "You're a jester whose jokes forgot to show up.",
-                "Your swordplay is second to your ability to trip on courage.",
-                "May your helmet fit thy sense and keep both from wobbling."
-            ]
+        const spread = (dx, dy, factor) => {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx<0||nx>=targetWidth||ny<0||ny>=targetHeight) return;
+          const nidx = (ny*targetWidth + nx)*3;
+          pixels[nidx]   += er*factor;
+          pixels[nidx+1] += eg*factor;
+          pixels[nidx+2] += eb*factor;
         };
 
-        // DOM elements
-        const categoryEl = document.getElementById('category');
-        const generateBtn = document.getElementById('generateBtn');
-        const copyBtn = document.getElementById('copyBtn');
-        const insultEl = document.getElementById('insult');
-        const insultWrap = document.getElementById('insultWrap');
-        const categoryLabel = document.getElementById('categoryLabel');
-        const savedInfo = document.getElementById('savedInfo');
-        const toast = document.getElementById('toast');
-        const themeToggle = document.getElementById('themeToggle');
-        const randomizeCat = document.getElementById('randomizeCat');
-        const clearSaved = document.getElementById('clearSaved');
+        spread(1,0,7/16);
+        spread(-1,1,3/16);
+        spread(0,1,5/16);
+        spread(1,1,1/16);
+      }
+      if(y % 10 === 0) setProgress(Math.floor((y/targetHeight)*100));
+      await new Promise(r=>setTimeout(r,0)); // yield thread
+    }
 
-        const STORAGE_KEY = 'insultgen.last';
-        const THEME_KEY = 'insultgen.theme';
+    // Build schematic data (stub)
+    const schematic = buildSchematic(pixels, targetWidth, targetHeight, thickness, orientation, format, paletteNames.current);
 
-        /* ===========================
-             Utilities
-             =========================== */
-        function pickRandom(array){
-            return array[Math.floor(Math.random()*array.length)];
-        }
+    // Download
+    const blob = new Blob([schematic], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const name = (fileName.trim() || 'image').replace(/[^a-zA-Z0-9_\-]/g, '_') || 'image';
+    a.download = `${name}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 
-        function setTheme(theme){
-            document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem(THEME_KEY, theme);
-        }
+    setIsConverting(false);
+    setProgress(0);
+  }, [imageInfo, targetWidth, targetHeight, thickness, orientation, format, fileName, allowedBlocks, adjustments]);
 
-        function showToast(text='Copied to clipboard'){
-            toast.textContent = text;
-            toast.classList.add('show');
-            clearTimeout(toast._t);
-            toast._t = setTimeout(()=>toast.classList.remove('show'), 1800);
-        }
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="fixed inset-0 opacity-[0.03] pointer-events-none"
+        style={{
+          backgroundImage: 'linear-gradient(hsl(var(--foreground)) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)',
+          backgroundSize: '24px 24px'
+        }}
+      />
 
-        /* ===========================
-             Letter-splitting for animated entrance
-             Wraps every character in a span. Sets CSS var --i for stagger.
-             =========================== */
-        function renderInsultWithAnimation(text){
-            // Clear previous content to restart animation
-            insultEl.innerHTML = '';
-            const frag = document.createDocumentFragment();
-            // Trim to avoid trailing whitespace sensitivity
-            const chars = Array.from(String(text));
-            chars.forEach((ch, i) => {
-                const span = document.createElement('span');
-                span.className = 'letter';
-                span.style.setProperty('--i', i);
-                span.textContent = ch;
-                frag.appendChild(span);
-            });
-            insultEl.appendChild(frag);
+      <div className="relative z-10 max-w-2xl mx-auto px-4 py-8 sm:py-16">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-10">
+          <div className="inline-flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
+              <Box className="w-5 h-5 text-primary" />
+            </div>
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">
+              Image <span className="text-primary">→</span> Schematic
+            </h1>
+          </div>
+          <p className="text-muted-foreground text-sm max-w-md mx-auto">
+            Convert any image into a Minecraft schematic file. Fast dithering and block mapping.
+          </p>
+        </motion.div>
 
-            // subtle wrap animation on container
-            insultWrap.animate([
-                { transform: 'translateY(6px)', opacity: 0.85 },
-                { transform: 'none', opacity: 1 }
-            ], { duration: 360, easing: 'cubic-bezier(.2,.9,.25,1)' });
-        }
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="space-y-6">
+          <ImageUploader imagePreview={imageInfo?.preview} onImageLoad={handleImageLoad} onClear={handleClear} />
 
-        /* ===========================
-             Generate insult
-             =========================== */
-        function generateInsult(){
-            const cat = categoryEl.value;
-            const pool = INSULTS[cat] || [];
-            const insult = pickRandom(pool) || 'You are uniquely you.';
-            // Render with animation
-            renderInsultWithAnimation(insult);
-            // Update meta and save
-            categoryLabel.textContent = 'Category: ' + cat;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({insult, category:cat, time:Date.now()}));
-            updateSavedInfo();
-        }
+          {imageInfo && (
+            <>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
+                <span className="px-2 py-1 rounded-md bg-card border border-border font-mono">
+                  {imageInfo.width} × {imageInfo.height}px
+                </span>
+                <span className="text-border">→</span>
+                <span className="px-2 py-1 rounded-md bg-primary/10 border border-primary/20 text-primary font-mono font-medium">
+                  {targetWidth} × {targetHeight} × {thickness} blocks
+                </span>
+              </motion.div>
 
-        /* ===========================
-             Load last saved insult if present
-             =========================== */
-        function updateSavedInfo(){
-            try{
-                const raw = localStorage.getItem(STORAGE_KEY);
-                if(!raw){ savedInfo.textContent = 'Last: —'; return; }
-                const obj = JSON.parse(raw);
-                const time = new Date(obj.time);
-                savedInfo.textContent = `Last: ${obj.category} • ${time.toLocaleString()}`;
-            }catch(e){
-                savedInfo.textContent = 'Last: —';
-            }
-        }
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-border bg-card/50 p-6 space-y-6">
+                <SizeSlider width={targetWidth} height={targetHeight} thickness={thickness} onWidthChange={setTargetWidth} onHeightChange={setTargetHeight} onThicknessChange={setThickness} />
+                <div className="border-t border-border" />
+                <OrientationToggle value={orientation} onChange={setOrientation} />
+                <div className="border-t border-border" />
+                <FormatToggle value={format} onChange={setFormat} />
+                <div className="border-t border-border" />
+                <ImageAdjustments adjustments={adjustments} onChange={setAdjustments} />
+                <div className="border-t border-border" />
+                <BlockSelector allowedBlocks={allowedBlocks} onChange={setAllowedBlocks} />
+                <div className="border-t border-border" />
+                <PalettePresets allowedBlocks={allowedBlocks} onChange={setAllowedBlocks} />
+                <div className="border-t border-border" />
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <FileText className="w-4 h-4 text-primary" /> Output Filename
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder="my_schematic" className="font-mono bg-background border-border" />
+                    <span className="text-sm text-muted-foreground font-mono whitespace-nowrap">.{format}</span>
+                  </div>
+                </div>
+              </motion.div>
 
-        function loadLastInsult(){
-            try{
-                const raw = localStorage.getItem(STORAGE_KEY);
-                if(!raw) return;
-                const obj = JSON.parse(raw);
-                // Preselect category and render insult
-                if(obj.category) categoryEl.value = obj.category;
-                if(obj.insult) renderInsultWithAnimation(obj.insult);
-            }catch(e){}
-        }
+              {previewUrl && <BlockPreview previewUrl={previewUrl} />}
+              {previewBlocks && <ThreeDPreview blocks={previewBlocks.blocks} width={previewBlocks.width} height={previewBlocks.height} thickness={thickness} orientation={orientation} />}
 
-        /* ===========================
-             Copy to clipboard with feedback
-             =========================== */
-        async function copyInsult(){
-            const text = insultEl.textContent.trim();
-            if(!text) { showToast('Nothing to copy'); return; }
-            try{
-                await navigator.clipboard.writeText(text);
-                showToast('Copied!');
-            }catch(e){
-                // fallback
-                const ta = document.createElement('textarea');
-                ta.value = text; document.body.appendChild(ta);
-                ta.select();
-                try{ document.execCommand('copy'); showToast('Copied!'); }catch(_){ showToast('Copy failed'); }
-                ta.remove();
-            }
-        }
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+                <ConvertButton onConvert={handleConvert} isConverting={isConverting} progress={progress} disabled={!imageInfo} format={format} />
+              </motion.div>
+            </>
+          )}
+        </motion.div>
 
-        /* ===========================
-             Misc handlers
-             =========================== */
-        generateBtn.addEventListener('click', generateInsult);
-        copyBtn.addEventListener('click', copyInsult);
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="mt-12 text-center text-xs text-muted-foreground/60">
+          <p>220+ Minecraft blocks · Fast dithering · Litematica v6 & Schematic · Runs in your browser</p>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
 
-        // Update category label when changed
-        categoryEl.addEventListener('change', ()=>{ categoryLabel.textContent = 'Category: ' + categoryEl.value; });
-
-        // Theme toggle with persistence
-        themeToggle.addEventListener('click', ()=>{
-            const current = document.documentElement.getAttribute('data-theme') || 'dark';
-            setTheme(current === 'dark' ? 'light' : 'dark');
-        });
-
-        // Random category
-        randomizeCat.addEventListener('click', ()=>{
-            const keys = Object.keys(INSULTS);
-            categoryEl.value = pickRandom(keys);
-            categoryLabel.textContent = 'Category: ' + categoryEl.value;
-        });
-
-        // Clear saved insult
-        clearSaved.addEventListener('click', ()=>{
-            localStorage.removeItem(STORAGE_KEY);
-            updateSavedInfo();
-            showToast('Saved cleared');
-        });
-
-        // Keyboard shortcut: G to generate, C to copy
-        document.addEventListener('keydown', (e)=>{
-            if(e.key.toLowerCase() === 'g') { e.preventDefault(); generateInsult(); }
-            if(e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey) === false) { e.preventDefault(); copyInsult(); }
-        });
-
-        /* ===========================
-             Initial setup
-             =========================== */
-        (function init(){
-            // apply theme from storage or system preference
-            const savedTheme = localStorage.getItem(THEME_KEY);
-            if(savedTheme){ document.documentElement.setAttribute('data-theme', savedTheme); }
-            else {
-                const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-                document.documentElement.setAttribute('data-theme', prefersLight ? 'light' : 'dark');
-            }
-
-            // Load last insult if any
-            updateSavedInfo();
-            loadLastInsult();
-
-            // If no insult was loaded, show subtle initial hint
-            if(!insultEl.textContent.trim()){
-                insultEl.textContent = 'Click Generate to unleash a witty barb.';
-            }
-        })();
-    </script>
-</body>
-</html>
+// Helper stubs: implement according to your app
+function resizeImageData(data, width, height, targetWidth, targetHeight, adjustments) {
+  // return resized & adjusted pixels as array of {r,g,b}
+  return new Array(targetWidth*targetHeight).fill({r:128,g:128,b:128}); // placeholder
+}
+function buildSchematic(pixels, width, height, thickness, orientation, format, blockNames) {
+  // return Uint8Array or ArrayBuffer for download
+  return new Uint8Array([0]); // placeholder
+}
+function generatePreview(){return null;}
+function generatePreviewBlocks(){return null;}
